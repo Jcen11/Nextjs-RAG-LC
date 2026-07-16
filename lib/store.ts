@@ -33,6 +33,12 @@ type ChatState = {
   messages: Message[]; // 当前会话的消息列表（ChatBox 用）
   systemPrompt: string; // 当前会话的 system 提示词
   loading: boolean; // 是否正在生成
+  // 标记"刚创建但还没保存进数据库的会话 id"
+  // 解决"新建会话首条消息被吃"的竞态：router.push 后 useEffect 会加载历史，
+  // 但此时数据库还没存（保存是流式后才发生），加载到空数组会覆盖 store.messages。
+  // handleSend 创建会话后设这个字段，useEffect 看到就跳过加载（直接用 store 里已有的消息）。
+  // 之前用 justCreatedRef 失败，因为 ref 在组件实例内、重建后丢失；放进 store 就跨实例存活了。
+  justCreatedId: string | null;
 
   // actions —— 状态操作函数
   setCurrentId: (id: string | null) => void;
@@ -41,9 +47,13 @@ type ChatState = {
   updateLastMessage: (content: string) => void; // 流式追加用：更新最后一条的 content
   setLoading: (loading: boolean) => void;
   setSystemPrompt: (prompt: string) => void;
+  setJustCreatedId: (id: string | null) => void;
 
   // 会话列表操作（从 API 拉数据后更新 store，供 Sidebar 用）
   setConversations: (conversations: Conversation[]) => void;
+  // 从后端拉取最新会话列表并写进 store（封装了 fetch + setConversations）
+  // ChatBox 保存消息后、Sidebar mount 时都调它，保证列表是最新
+  refreshConversations: () => Promise<void>;
 };
 
 export const useChatStore = create<ChatState>((set) => ({
@@ -53,6 +63,7 @@ export const useChatStore = create<ChatState>((set) => ({
   messages: [],
   systemPrompt: "",
   loading: false,
+  justCreatedId: null,
 
   // === actions ===
   setCurrentId: (id) => {
@@ -80,5 +91,20 @@ export const useChatStore = create<ChatState>((set) => ({
 
   setSystemPrompt: (prompt) => set({ systemPrompt: prompt }),
 
+  setJustCreatedId: (id) => set({ justCreatedId: id }),
+
   setConversations: (conversations) => set({ conversations }),
+
+  // 从后端拉取最新会话列表写进 store
+  // 注意：action 里可以直接用 fetch（Zustand 的 action 是普通函数，能发异步请求）
+  refreshConversations: async () => {
+    try {
+      const res = await fetch("/api/conversations");
+      if (!res.ok) return;
+      const data = await res.json();
+      set({ conversations: data.conversations as Conversation[] });
+    } catch {
+      // 静默失败，列表不更新也不影响聊天
+    }
+  },
 }));
