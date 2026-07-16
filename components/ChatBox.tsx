@@ -14,12 +14,17 @@ type Message = {
 // - 有 id（从 /chat/[id] 进入）：mount 时加载历史
 // - 无 id（从 /chat 进入）：首次发送时创建会话，拿到 id 后跳转 URL
 export default function ChatBox({ conversationId }: { conversationId?: string }) {
+// 等价于function ChatBox(props: { conversationId?: string }) 后面取props.conversationId，但解构更简洁
   const router = useRouter();
   const [input, setInput] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
   const [systemOpen, setSystemOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
+
+  // 新：标记"这个 conversationId 是本地刚创建的，useEffect 别去取历史"
+  // 解决"新建会话首条消息被吃掉"的竞态 bug（详见 12b 文档）
+  const justCreatedRef = useRef(false);
 
   // 新：mount 时（或 conversationId 变化时）从数据库加载历史
   // 依赖数组 [conversationId] 表示只在 conversationId 变化时重新加载
@@ -28,6 +33,13 @@ export default function ChatBox({ conversationId }: { conversationId?: string })
       // 无 id = 新会话，清空状态
       setMessages([]);
       setSystemPrompt("");
+      return;
+    }
+
+    // 新：如果是本地刚创建的会话，跳过加载历史（数据库里还是空的，
+    // 而且本地 state 已经有正在进行的对话，取历史会覆盖掉——这是 bug 根因）
+    if (justCreatedRef.current) {
+      justCreatedRef.current = false; // 用完复位
       return;
     }
 
@@ -107,11 +119,11 @@ export default function ChatBox({ conversationId }: { conversationId?: string })
         }
         const data = await res.json();
         activeConvId = data.id;
+        // 新：打标记——告诉即将触发的 useEffect"这个 id 是本地刚建的，别去取历史"
+        // 必须在 router.push 之前设置，因为 push 会同步触发 useEffect 重跑
+        justCreatedRef.current = true;
         // 更新 URL（不触发整页刷新，走客户端导航）
         router.push(`/chat/${activeConvId}`);
-        // 注意：router.push 会让 useEffect 重新跑（conversationId 变了），
-        // 但此时 messages 还是空的，useEffect 会 setMessages([])。
-        // 所以这里不能让组件重新加载——我们继续往下走，本地 state 已经有了。
       } catch {
         return;
       }
