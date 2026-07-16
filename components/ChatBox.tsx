@@ -16,7 +16,10 @@ export default function ChatBox() {
   const messages = useChatStore((s) => s.messages);
   const systemPrompt = useChatStore((s) => s.systemPrompt);
   const loading = useChatStore((s) => s.loading);
-  const justCreatedId = useChatStore((s) => s.justCreatedId);
+  // 注意：justCreatedId 不用 selector 订阅，改在 useEffect 里用 getState() 实时读。
+  // 原因：如果订阅它并放进 useEffect 依赖数组，清标记（setJustCreatedId(null)）会
+  // 触发 useEffect 重跑，重跑时标记已清空、保护失效，走到加载历史分支覆盖 messages。
+  // 用 getState() 读不建立订阅，清标记不会触发重跑。
 
   // 从 store 读 actions
   const setMessages = useChatStore((s) => s.setMessages);
@@ -32,17 +35,19 @@ export default function ChatBox() {
   const [systemOpen, setSystemOpen] = useState(false);
 
   // mount 时（或 currentId 变化时）从数据库加载历史
-  // 依赖数组 [currentId]：currentId 变化时重新加载
+  // 依赖数组只放 [currentId]：currentId 变化时才该重新加载。
+  // justCreatedId 故意不进依赖——它用 getState() 实时读，避免清标记触发重跑（详见下方注释）。
   useEffect(() => {
     // 新建会话保护：如果标记了 justCreatedId，说明是本地刚建的会话，
-    // 此时 store.messages 已有用户消息（handleSend 写进去的），数据库还没存。
-    // 跳过所有加载/清空逻辑——否则 useEffect 会用空数组覆盖掉 store.messages。
-    // 这个检查必须放在最前面，拦住 useEffect 的所有分支（包括 currentId=null 的清空分支），
-    // 因为 router.push 后新实例 mount 时 currentId 可能还是 null（SyncConversationId 还没跑）。
-    if (justCreatedId) {
+    // store.messages 已有用户消息（handleSend 写进去的），数据库还没存。
+    // 跳过所有加载/清空逻辑——否则会拿到空数组覆盖掉 store.messages。
+    // 用 getState() 实时读，不建立订阅：这样清标记（setJustCreatedId(null)）不会触发
+    // useEffect 重跑。否则会形成"清标记→依赖变→重跑→标记已空→加载历史覆盖"的链条。
+    const createdId = useChatStore.getState().justCreatedId;
+    if (createdId) {
       // 标记还在 = 这是刚建的会话，别动 messages
-      // 等 currentId 变成 justCreatedId 后再清标记（确保两次 useEffect 都被拦住）
-      if (currentId === justCreatedId) {
+      // 等 currentId 变成 createdId 后再清标记（确保 currentId=null 和 currentId=abc 两次都被拦住）
+      if (currentId === createdId) {
         setJustCreatedId(null);
       }
       return;
@@ -88,7 +93,10 @@ export default function ChatBox() {
     return () => {
       cancelled = true;
     };
-  }, [currentId, justCreatedId, setMessages, setSystemPrompt, setJustCreatedId]);
+    // 依赖只放 currentId：它变化时才该重新加载。
+    // justCreatedId 不进依赖（用 getState 读），避免清标记触发重跑。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentId]);
 
   // 保存当前请求的 AbortController，停止时调它的 abort()
   // 用 ref 而不是 state——它不该触发重渲染，只是个"遥控器"
