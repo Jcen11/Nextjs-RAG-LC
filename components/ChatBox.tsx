@@ -3,43 +3,38 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Markdown from "./Markdown";
+import { useChatStore, type Message } from "@/lib/store";
 
-type Message = {
-  role: "user" | "assistant" | "system";
-  content: string;
-  id?: number; // 新：从数据库加载的消息有 id（自增主键），新建的消息暂无
-};
-
-// 新：组件接收可选的 conversationId
-// - 有 id（从 /chat/[id] 进入）：mount 时加载历史
-// - 无 id（从 /chat 进入）：首次发送时创建会话，拿到 id 后跳转 URL
-export default function ChatBox({ conversationId }: { conversationId?: string }) {
-// 等价于function ChatBox(props: { conversationId?: string }) 后面取props.conversationId，但解构更简洁
+// ChatBox 不再接收 conversationId prop——改从全局 store 读 currentId
+// 这是阶段 14（全局状态管理）的改造，根治"组件卸载重建导致 messages 丢失"的 bug。
+// 详见 12b 文档（debug 过程）和 14 文档（Zustand 设计）。
+export default function ChatBox() {
   const router = useRouter();
+
+  // 从 store 读状态（组件重建后这些值还在，因为存在组件外的 store 里）
+  const currentId = useChatStore((s) => s.currentId);
+  const messages = useChatStore((s) => s.messages);
+  const systemPrompt = useChatStore((s) => s.systemPrompt);
+  const loading = useChatStore((s) => s.loading);
+
+  // 从 store 读 actions
+  const setMessages = useChatStore((s) => s.setMessages);
+  const appendMessage = useChatStore((s) => s.appendMessage);
+  const updateLastMessage = useChatStore((s) => s.updateLastMessage);
+  const setLoading = useChatStore((s) => s.setLoading);
+  const setSystemPrompt = useChatStore((s) => s.setSystemPrompt);
+
+  // 纯 UI 临时状态留在组件 useState（不必进 store）
   const [input, setInput] = useState("");
-  const [systemPrompt, setSystemPrompt] = useState("");
   const [systemOpen, setSystemOpen] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [loading, setLoading] = useState(false);
 
-  // 新：标记"这个 conversationId 是本地刚创建的，useEffect 别去取历史"
-  // 解决"新建会话首条消息被吃掉"的竞态 bug（详见 12b 文档）
-  const justCreatedRef = useRef(false);
-
-  // 新：mount 时（或 conversationId 变化时）从数据库加载历史
-  // 依赖数组 [conversationId] 表示只在 conversationId 变化时重新加载
+  // mount 时（或 currentId 变化时）从数据库加载历史
+  // 依赖数组 [currentId]：currentId 变化时重新加载
   useEffect(() => {
-    if (!conversationId) {
+    if (!currentId) {
       // 无 id = 新会话，清空状态
       setMessages([]);
       setSystemPrompt("");
-      return;
-    }
-
-    // 新：如果是本地刚创建的会话，跳过加载历史（数据库里还是空的，
-    // 而且本地 state 已经有正在进行的对话，取历史会覆盖掉——这是 bug 根因）
-    if (justCreatedRef.current) {
-      justCreatedRef.current = false; // 用完复位
       return;
     }
 
@@ -47,7 +42,7 @@ export default function ChatBox({ conversationId }: { conversationId?: string })
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/conversations/${conversationId}`);
+        const res = await fetch(`/api/conversations/${currentId}`);
         if (!res.ok) {
           return;
         }
@@ -56,11 +51,13 @@ export default function ChatBox({ conversationId }: { conversationId?: string })
           return; // 组件卸载了就别再 setState（避免 React 警告）
         }
         setMessages(
-          data.messages.map((m: { id: number; role: string; content: string }) => ({
-            id: m.id,
-            role: m.role as Message["role"],
-            content: m.content,
-          })),
+          data.messages.map(
+            (m: { id: number; role: string; content: string }) => ({
+              id: m.id,
+              role: m.role as Message["role"],
+              content: m.content,
+            }),
+          ),
         );
         if (data.conversation?.systemPrompt) {
           setSystemPrompt(data.conversation.systemPrompt);
@@ -70,13 +67,13 @@ export default function ChatBox({ conversationId }: { conversationId?: string })
       }
     })();
 
-    // cleanup：如果 conversationId 变化或组件卸载时请求还没回，标记取消
+    // cleanup：如果 currentId 变化或组件卸载时请求还没回，标记取消
     return () => {
       cancelled = true;
     };
-  }, [conversationId]);
+  }, [currentId, setMessages, setSystemPrompt]);
 
-  // 新：保存当前请求的 AbortController，停止时调它的 abort()
+  // 保存当前请求的 AbortController，停止时调它的 abort()
   // 用 ref 而不是 state——它不该触发重渲染，只是个"遥控器"
   //
   // 为什么需要这个 ref（核心）：
@@ -87,7 +84,7 @@ export default function ChatBox({ conversationId }: { conversationId?: string })
   //   没有这个 ref，点"停止"时盒子是空的，啥也中断不了。
   const abortRef = useRef<AbortController | null>(null);
 
-  // 新：点"停止"时调用，中断正在进行的请求
+  // 点"停止"时调用，中断正在进行的请求
   // 这里的 abortRef.current 就是 handleSend 里放进去的那个 controller
   // ?. 是因为初始值是 null（还没发送过），取不到就什么都不做
   function handleStop() {
@@ -101,10 +98,11 @@ export default function ChatBox({ conversationId }: { conversationId?: string })
       return;
     }
 
-    // 新：首次发送时若无 conversationId，先创建会话
-    // 创建成功后用 router.push 更新 URL 到 /chat/[id]
-    // 这样刷新页面也能恢复，且当前会话有了"身份"
-    let activeConvId = conversationId;
+    // 首次发送时若无 currentId，先创建会话
+    // 创建成功后用 router.push 更新 URL 到 /chat/[id]（store→URL 方向）
+    // URL 变化会触发 [id]/page.tsx 的 SyncConversationId 同步回 store（URL→store 方向）
+    // 这里的关键是：state 已经在 store 里，组件即使重建也能从 store 读回 messages
+    let activeConvId = currentId;
     if (!activeConvId) {
       try {
         const res = await fetch("/api/conversations", {
@@ -119,10 +117,8 @@ export default function ChatBox({ conversationId }: { conversationId?: string })
         }
         const data = await res.json();
         activeConvId = data.id;
-        // 新：打标记——告诉即将触发的 useEffect"这个 id 是本地刚建的，别去取历史"
-        // 必须在 router.push 之前设置，因为 push 会同步触发 useEffect 重跑
-        justCreatedRef.current = true;
         // 更新 URL（不触发整页刷新，走客户端导航）
+        // 注意：跳到 /chat/[id] 会让本组件重建，但因为 messages 在 store 里，重建后不丢
         router.push(`/chat/${activeConvId}`);
       } catch {
         return;
@@ -143,17 +139,18 @@ export default function ChatBox({ conversationId }: { conversationId?: string })
       content: "",
     };
 
-    setMessages((prev) => [...prev, userMessage, assistantMessage]);
+    // 用 store 的 action 更新（替代原来的本地 setMessages）
+    setMessages([...messages, userMessage, assistantMessage]);
     setInput("");
     setLoading(true);
 
-    // 新：每次发送都新建一个 AbortController，存到 ref 供"停止"按钮调用
+    // 每次发送都新建一个 AbortController，存到 ref 供"停止"按钮调用
     // 步骤①：造一个新遥控器（每个请求一个独立的 controller）
     const controller = new AbortController();
     // 步骤②：把遥控器放进共享盒子 abortRef，这样 handleStop 才能拿到它
     abortRef.current = controller;
 
-    // 新：标记这轮是否正常完成（用于决定是否保存到数据库）
+    // 标记这轮是否正常完成（用于决定是否保存到数据库）
     // - 正常 break 出 while 循环 = true → 保存
     // - 中止/出错进 catch = false → 不保存
     // 声明在 try 外面，finally 才能访问到
@@ -179,6 +176,7 @@ export default function ChatBox({ conversationId }: { conversationId?: string })
       if (!response.ok) {
         const data = await response.json();
 
+        /* 旧：直接用本地 setMessages 改（阶段 12）
         setMessages((prev) => {
           const next = [...prev];
           next[next.length - 1] = {
@@ -187,12 +185,16 @@ export default function ChatBox({ conversationId }: { conversationId?: string })
           };
           return next;
         });
+        */
+        // 新：用 store 的 updateLastMessage 更新最后一条
+        updateLastMessage(data.reply || "请求失败。");
         return;
       }
 
       const reader = response.body?.getReader();
 
       if (!reader) {
+        /* 旧：本地 setMessages
         setMessages((prev) => {
           const next = [...prev];
           next[next.length - 1] = {
@@ -201,6 +203,8 @@ export default function ChatBox({ conversationId }: { conversationId?: string })
           };
           return next;
         });
+        */
+        updateLastMessage("没有收到流式响应。");
         return;
       }
 
@@ -223,23 +227,27 @@ export default function ChatBox({ conversationId }: { conversationId?: string })
 
         assistantContent += chunk; // 同步累积，供 finally 保存用
 
+        /* 旧：本地 setMessages 追加 chunk（阶段 12）
         setMessages((prev) => {
           const next = [...prev];
           const lastMessage = next[next.length - 1];
-
           next[next.length - 1] = {
             ...lastMessage,
             content: lastMessage.content + chunk,
           };
-
           return next;
         });
+        */
+        // 新：用 store 的 updateLastMessage，传入累积后的完整 content
+        // assistantContent 已经把所有 chunk 同步累加好了，整体替换最后一条的 content
+        // （比旧的"每次读 prev 再拼接"更直接，因为 assistantContent 是同步变量）
+        updateLastMessage(assistantContent);
       }
 
       // 走到这里说明 while 正常结束（流读完），标记为可保存
       completedNormally = true;
     } catch (error: unknown) {
-      // 新：区分两种情况——
+      // 区分两种情况——
       // 1) 用户主动中止：controller.signal.aborted 为 true
       //    → 不报错，保留已经生成的部分（可能用户只是不想等了，前面的话还有用）
       // 2) 其它异常（网络断开、超时、服务端崩了）→ 给错误提示
@@ -256,61 +264,38 @@ export default function ChatBox({ conversationId }: { conversationId?: string })
 
       const aborted = controller.signal.aborted;
 
-      setMessages((prev) => {
-        const next = [...prev];
-        const lastMessage = next[next.length - 1];
-
-        if (aborted) {
-          // 主动中止：若已生成了内容就补一个"（已停止）"标记，否则提示已取消
-          next[next.length - 1] = {
-            ...lastMessage,
-            content:
-              lastMessage.content.trim().length > 0
-                ? `${lastMessage.content}\n\n_（已停止）_`
-                : "_（已取消）_",
-          };
-        } else {
-          // 非主动中止：判断是不是网络问题，给更具体的提示
-          const isNetworkError =
-            error instanceof TypeError && error.message === "Failed to fetch";
-          next[next.length - 1] = {
-            role: "assistant",
-            content: isNetworkError
-              ? "网络连接失败，请检查网络后重试。"
-              : "请求过程中发生异常，请重试。",
-          };
-        }
-
-        return next;
-      });
+      // 新：用 store 更新最后一条消息
+      // 注意：不能用上面渲染时捕获的 messages（闭包旧值），要用 getState() 读实时值
+      // 因为 catch 执行时，流式已经更新过 store 多次，渲染闭包的 messages 是发送前的
+      const lastContent =
+        useChatStore.getState().messages.slice(-1)[0]?.content ?? "";
+      if (aborted) {
+        // 主动中止：若已生成了内容就补一个"（已停止）"标记，否则提示已取消
+        updateLastMessage(
+          lastContent.trim().length > 0
+            ? `${lastContent}\n\n_（已停止）_`
+            : "_（已取消）_",
+        );
+      } else {
+        // 非主动中止：判断是不是网络问题，给更具体的提示
+        const isNetworkError =
+          error instanceof TypeError && error.message === "Failed to fetch";
+        updateLastMessage(
+          isNetworkError
+            ? "网络连接失败，请检查网络后重试。"
+            : "请求过程中发生异常，请重试。",
+        );
+      }
     } finally {
       // 步骤④：请求结束（正常完成/被中止/出错都走这里），清空盒子
       // 清掉是为了让下次发送放新的 controller，避免误用到旧的
       abortRef.current = null;
       setLoading(false);
 
-      // 新：只有正常完成时才保存到数据库
+      // 只有正常完成时才保存到数据库
       // 中止/出错时 completedNormally 仍为 false，跳过保存
       // （这是简化处理；理想方案见 待学与待办.md 的"后端 tee 边写边存"改进点）
       if (completedNormally && activeConvId && text && assistantContent) {
-        /* 旧：fire-and-forget，不刷新侧边栏（阶段 12）
-        // 保存后侧边栏不会更新，新建会话的首条标题要刷新页面才出现
-        fetch("/api/messages", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            conversationId: activeConvId,
-            userMessage: text,
-            assistantMessage: assistantContent,
-          }),
-        }).catch(() => {
-          // 保存失败静默处理（实际产品里可以加 toast 提示）
-        });
-        */
-
-        // 新：保存成功后调 router.refresh()，触发侧边栏重新拉列表
-        // 因为会话标题是"保存首条消息时"才生成的，保存完侧边栏才能显示标题
-        // 用 await 等保存完成再 refresh，保证侧边栏拿到的是最新数据
         try {
           await fetch("/api/messages", {
             method: "POST",

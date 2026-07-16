@@ -2,59 +2,52 @@
 
 // 会话侧边栏：列出所有会话，支持切换/重命名/删除/新建
 //
-// 这是一个 client component，因为它有大量交互（点击、编辑、删除）和客户端导航。
-// 数据来源：GET /api/conversations（列表）。
-// 刷新机制：usePathname 监听路由变化 → 路由变了就重新拉列表。
-//   这样用户切换会话/新建会话后，侧边栏自动同步（事件驱动，不轮询）。
+// 阶段 14 改造：从全局 store 读 conversations 和 currentId，不再用 usePathname 解析 URL。
+// 列表数据由 store 管理，create/rename/delete 后主动刷新（不再依赖 pathname 变化触发）。
+// 详见 14.全局状态管理.md。
 
 import { useEffect, useState } from "react";
-import { useRouter, usePathname } from "next/navigation";
-
-type Conversation = {
-  id: string;
-  title: string;
-  createdAt: string;
-};
+import { useRouter } from "next/navigation";
+import { useChatStore } from "@/lib/store";
+import type { Conversation } from "@/lib/queries";
 
 export default function Sidebar() {
   const router = useRouter();
-  const pathname = usePathname();
 
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  // 当前正在重命名的会话 id（null = 没在重命名）
+  // 从 store 读状态（currentId 由 [id]/page.tsx 的 SyncConversationId 同步进来）
+  const conversations = useChatStore((s) => s.conversations);
+  const currentId = useChatStore((s) => s.currentId);
+  const setConversations = useChatStore((s) => s.setConversations);
+
+  // 纯 UI 临时状态留在组件 useState
   const [editingId, setEditingId] = useState<string | null>(null);
-  // 重命名 input 的临时值
   const [editTitle, setEditTitle] = useState("");
 
-  // 从 URL 提取当前会话 id（/chat/xxx → xxx；/chat → 无）
-  // pathname 形如 "/chat/f47ac10b-..." 或 "/chat"
-  const currentId = pathname.startsWith("/chat/") ? pathname.slice("/chat/".length) : null;
-
-  // 拉取会话列表
+  // 拉取会话列表（从 API 拿到后写进 store，供所有订阅者用）
   async function loadConversations() {
     try {
       const res = await fetch("/api/conversations");
       if (!res.ok) return;
       const data = await res.json();
-      setConversations(data.conversations);
+      setConversations(data.conversations as Conversation[]);
     } catch {
       // 静默失败，侧边栏空着也不影响聊天
     }
   }
 
-  // mount 时拉一次 + pathname 变化时重新拉
-  // pathname 变化 = 用户切换了会话或新建了会话，此时列表可能需要更新
-  // （新建会话保存后才有标题，切换会话不需要更新但拉一下也无妨）
+  // mount 时拉一次列表
+  // 不再依赖 pathname 变化——列表刷新改为在 create/rename/delete 后主动调 loadConversations
   useEffect(() => {
     loadConversations();
-  }, [pathname]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // 新建会话：跳到 /chat（无 id），ChatBox 会进入新建流程
+  // 新建会话：跳到 /chat（无 id），store.currentId 会被清空（见 /chat/page.tsx 的逻辑）
   function handleNew() {
     router.push("/chat");
   }
 
-  // 切换会话：跳到 /chat/[id]
+  // 切换会话：跳到 /chat/[id]（store→URL），URL 变化后 SyncConversationId 同步回 store
   function handleSelect(id: string) {
     if (id === currentId) return; // 已经在当前会话，不重复跳
     router.push(`/chat/${id}`);
