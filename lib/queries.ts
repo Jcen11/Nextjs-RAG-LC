@@ -75,6 +75,21 @@ export function getConversation(id: string): Conversation | null {
   };
 }
 
+export function listConversations(): Conversation[] {
+  // ORDER BY created_at DESC：最新的在最前面（侧边栏从上到下是新→旧）
+  const rows = db
+    .prepare("SELECT * FROM conversations ORDER BY created_at DESC")
+    .all() as ConversationRow[];
+
+  // 映射逻辑和 getConversation 一样：下划线 → 驼峰
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title ?? "",
+    systemPrompt: row.system_prompt ?? "",
+    createdAt: row.created_at,
+  }));
+}
+
 export function updateConversationTitle(id: string, title: string): void {
   db.prepare("UPDATE conversations SET title = ? WHERE id = ?").run(title, id);
 }

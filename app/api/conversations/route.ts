@@ -6,8 +6,16 @@
 // id 用 crypto.randomUUID() 生成（Web 标准 API，Node/浏览器都有），
 // 产生形如 "f47ac10b-58cc-4372-a567-0e02b2c3d479" 的 UUID，作为 URL 标识。
 
-import { createConversation } from "@/lib/queries";
+import { createConversation, listConversations } from "@/lib/queries";
 import { randomUUID } from "node:crypto";
+
+// GET /api/conversations —— 列出所有会话（供侧边栏显示）
+// 不含消息内容，只返回会话元信息（id/title/createdAt）
+// 按 created_at DESC 排序（最新的在最前），由 listConversations 保证
+export async function GET() {
+  const conversations = listConversations();
+  return Response.json({ conversations });
+}
 
 export async function POST(request: Request) {
   let systemPrompt = "";
