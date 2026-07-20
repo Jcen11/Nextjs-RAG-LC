@@ -16,7 +16,7 @@
 // - 留组件：纯 UI 临时状态（input 输入框、systemOpen 折叠、editingId 重命名、abortRef）
 
 import { create } from "zustand";
-import type { Conversation } from "@/lib/queries";
+import type { Conversation, KnowledgeBase } from "@/lib/queries";
 
 // 组件渲染用的消息类型（比 ChatMessage 简化，去掉 createdAt，加上 system 角色兼容）
 export type Message = {
@@ -39,6 +39,11 @@ type ChatState = {
   // handleSend 创建会话后设这个字段，useEffect 看到就跳过加载（直接用 store 里已有的消息）。
   // 之前用 justCreatedRef 失败，因为 ref 在组件实例内、重建后丢失；放进 store 就跨实例存活了。
   justCreatedId: string | null;
+  // 阶段 15：当前会话绑定的知识库 id（null = 纯对话模式）
+  // 从数据库加载会话时读出来，ChatBox 发请求时带上，决定是否走 RAG
+  currentKbId: string | null;
+  // 阶段 15：所有知识库列表（知识库管理面板用）
+  knowledgeBases: KnowledgeBase[];
 
   // actions —— 状态操作函数
   setCurrentId: (id: string | null) => void;
@@ -48,12 +53,16 @@ type ChatState = {
   setLoading: (loading: boolean) => void;
   setSystemPrompt: (prompt: string) => void;
   setJustCreatedId: (id: string | null) => void;
+  setCurrentKbId: (kbId: string | null) => void; // 阶段 15
+  setKnowledgeBases: (kbs: KnowledgeBase[]) => void; // 阶段 15
 
   // 会话列表操作（从 API 拉数据后更新 store，供 Sidebar 用）
   setConversations: (conversations: Conversation[]) => void;
   // 从后端拉取最新会话列表并写进 store（封装了 fetch + setConversations）
   // ChatBox 保存消息后、Sidebar mount 时都调它，保证列表是最新
   refreshConversations: () => Promise<void>;
+  // 阶段 15：从后端拉取最新知识库列表写进 store
+  refreshKnowledgeBases: () => Promise<void>;
 };
 
 export const useChatStore = create<ChatState>((set) => ({
@@ -64,6 +73,8 @@ export const useChatStore = create<ChatState>((set) => ({
   systemPrompt: "",
   loading: false,
   justCreatedId: null,
+  currentKbId: null,
+  knowledgeBases: [],
 
   // === actions ===
   setCurrentId: (id) => {
@@ -93,6 +104,10 @@ export const useChatStore = create<ChatState>((set) => ({
 
   setJustCreatedId: (id) => set({ justCreatedId: id }),
 
+  setCurrentKbId: (kbId) => set({ currentKbId: kbId }),
+
+  setKnowledgeBases: (kbs) => set({ knowledgeBases: kbs }),
+
   setConversations: (conversations) => set({ conversations }),
 
   // 从后端拉取最新会话列表写进 store
@@ -105,6 +120,18 @@ export const useChatStore = create<ChatState>((set) => ({
       set({ conversations: data.conversations as Conversation[] });
     } catch {
       // 静默失败，列表不更新也不影响聊天
+    }
+  },
+
+  // 阶段 15：拉取最新知识库列表
+  refreshKnowledgeBases: async () => {
+    try {
+      const res = await fetch("/api/knowledge");
+      if (!res.ok) return;
+      const data = await res.json();
+      set({ knowledgeBases: data.knowledgeBases as KnowledgeBase[] });
+    } catch {
+      // 静默失败
     }
   },
 }));

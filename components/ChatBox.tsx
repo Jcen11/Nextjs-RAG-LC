@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Markdown from "./Markdown";
+import KbSelector from "./KbSelector";
 import { useChatStore, type Message } from "@/lib/store";
 
 // ChatBox 不再接收 conversationId prop——改从全局 store 读 currentId
@@ -16,6 +17,7 @@ export default function ChatBox() {
   const messages = useChatStore((s) => s.messages);
   const systemPrompt = useChatStore((s) => s.systemPrompt);
   const loading = useChatStore((s) => s.loading);
+  const currentKbId = useChatStore((s) => s.currentKbId); // 阶段 15：当前会话的知识库
   // 注意：justCreatedId 不用 selector 订阅，改在 useEffect 里用 getState() 实时读。
   // 原因：如果订阅它并放进 useEffect 依赖数组，清标记（setJustCreatedId(null)）会
   // 触发 useEffect 重跑，重跑时标记已清空、保护失效，走到加载历史分支覆盖 messages。
@@ -29,6 +31,7 @@ export default function ChatBox() {
   const setSystemPrompt = useChatStore((s) => s.setSystemPrompt);
   const setJustCreatedId = useChatStore((s) => s.setJustCreatedId);
   const refreshConversations = useChatStore((s) => s.refreshConversations);
+  const setCurrentKbId = useChatStore((s) => s.setCurrentKbId); // 阶段 15
 
   // 纯 UI 临时状态留在组件 useState（不必进 store）
   const [input, setInput] = useState("");
@@ -57,6 +60,7 @@ export default function ChatBox() {
       // 无 id = 新会话，清空状态
       setMessages([]);
       setSystemPrompt("");
+      setCurrentKbId(null); // 阶段 15：新建会话默认不绑定知识库
       return;
     }
 
@@ -84,6 +88,8 @@ export default function ChatBox() {
         if (data.conversation?.systemPrompt) {
           setSystemPrompt(data.conversation.systemPrompt);
         }
+        // 阶段 15：读出会话绑定的知识库 id，存进 store（决定发消息时是否走 RAG）
+        setCurrentKbId(data.conversation?.kbId ?? null);
       } catch {
         // 加载失败静默处理，用户会看到空会话（不影响发新消息）
       }
@@ -196,6 +202,7 @@ export default function ChatBox() {
         body: JSON.stringify({
           messages: messagesToSend,
           system: systemPrompt.trim() || undefined,
+          kbId: currentKbId ?? undefined, // 阶段 15：绑了知识库就走 RAG，否则纯对话
         }),
         // 步骤③：把 controller 和 fetch 绑定（给 fetch 挂号）
         // 之后只要 controller.abort() 被调用，这个 fetch 就会立刻中断
@@ -348,6 +355,9 @@ export default function ChatBox() {
 
   return (
     <section>
+      {/* 阶段 15：知识库选择器（选当前会话绑哪个知识库，决定是否走 RAG） */}
+      <KbSelector conversationId={currentId} />
+
       {/* 旧：system 输入框无条件显示
       <div>
         <textarea
