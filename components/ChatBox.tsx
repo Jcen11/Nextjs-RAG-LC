@@ -5,6 +5,11 @@ import { useRouter } from "next/navigation";
 import Markdown from "./Markdown";
 import KbSelector from "./KbSelector";
 import { useChatStore, type Message } from "@/lib/store";
+// 阶段 17：引入 shadcn/ui 组件美化界面（共存策略，老 CSS 不动）
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 // ChatBox 不再接收 conversationId prop——改从全局 store 读 currentId
 // 这是阶段 14（全局状态管理）的改造，根治"组件卸载重建导致 messages 丢失"的 bug。
@@ -354,7 +359,9 @@ export default function ChatBox() {
   }
 
   return (
-    <section>
+    // 阶段 17：用 Tailwind 做纵向 flex 布局——消息区滚动 + 底部输入栏固定
+    // chat-main 已经是 flex-1，这里 section 撑满它的高度，内部纵向排列
+    <section className="flex flex-col h-full">
       {/* 阶段 15：知识库选择器（选当前会话绑哪个知识库，决定是否走 RAG） */}
       <KbSelector conversationId={currentId} />
 
@@ -370,7 +377,7 @@ export default function ChatBox() {
       */}
 
       {/* 新：system 输入框可折叠，默认收起 */}
-      <div>
+      <div className="px-1 py-2">
         <button
           className="system-toggle"
           onClick={() => setSystemOpen((open) => !open)}
@@ -380,7 +387,7 @@ export default function ChatBox() {
           {systemPrompt.trim() && !systemOpen ? "（已设置）" : ""}
         </button>
         {systemOpen && (
-          <textarea
+          <Textarea
             value={systemPrompt}
             onChange={(event) => setSystemPrompt(event.target.value)}
             placeholder="系统提示词（可选）：比如 你是一个友好的助手，回答要简洁"
@@ -403,8 +410,8 @@ export default function ChatBox() {
       */}
 
       {/* 新：回车发送（Shift+Enter 不触发）+ 清空按钮 + 停止按钮 */}
-      <div>
-        <input
+      <div className="flex items-center gap-2 px-1 py-2 border-t border-border">
+        <Input
           value={input}
           onChange={(event) => setInput(event.target.value)}
           onKeyDown={(event) => {
@@ -415,14 +422,14 @@ export default function ChatBox() {
           }}
           placeholder="请输入消息（回车发送）"
         />
-        <button onClick={handleSend} disabled={loading}>
+        <Button onClick={handleSend} disabled={loading}>
           {loading ? "发送中..." : "发送"}
-        </button>
+        </Button>
         {/* 新：loading 时显示"停止"按钮，点击中断当前生成 */}
         {loading && (
-          <button className="stop-btn" onClick={handleStop} type="button">
+          <Button variant="destructive" onClick={handleStop} type="button">
             停止
-          </button>
+          </Button>
         )}
         {/* 旧：清空当前消息（仅本地，刷新后还在）
         <button
@@ -435,14 +442,14 @@ export default function ChatBox() {
         </button>
         */}
         {/* 新：新建会话——跳到 /chat（无 id），触发全新会话流程 */}
-        <button
-          className="clear-btn"
+        <Button
+          variant="outline"
           onClick={() => router.push("/chat")}
           disabled={loading}
           type="button"
         >
           新建会话
-        </button>
+        </Button>
       </div>
 
       {/* 旧：消息纯文本显示，不区分 user/assistant 样式，AI 回复的 Markdown 标记原样可见
@@ -456,22 +463,24 @@ export default function ChatBox() {
       </ul>
       */}
 
-      {/* 新：assistant 消息用 Markdown 渲染，user 消息仍纯文本，并区分消息样式 */}
-      <ul>
-        {messages.map((message, index) => (
-          <li
-            key={message.id ?? index}
-            className={message.role === "user" ? "msg-user" : "msg-assistant"}
-          >
-            <strong>{message.role === "user" ? "你" : "机器人"}：</strong>
-            {message.role === "assistant" ? (
-              <Markdown content={message.content} />
-            ) : (
-              message.content
-            )}
-          </li>
-        ))}
-      </ul>
+      {/* 新：消息区用 ScrollArea 包裹，美化滚动条；内部消息样式沿用老 CSS（msg-user/msg-assistant） */}
+      <ScrollArea className="flex-1 min-h-0 px-1">
+        <ul>
+          {messages.map((message, index) => (
+            <li
+              key={message.id ?? index}
+              className={message.role === "user" ? "msg-user" : "msg-assistant"}
+            >
+              <strong>{message.role === "user" ? "你" : "机器人"}：</strong>
+              {message.role === "assistant" ? (
+                <Markdown content={message.content} />
+              ) : (
+                message.content
+              )}
+            </li>
+          ))}
+        </ul>
+      </ScrollArea>
     </section>
   );
 }

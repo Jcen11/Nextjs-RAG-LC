@@ -16,7 +16,7 @@ export default function ChatLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="chat-shell">
+    <div className="chat-shell flex-1 min-h-0">
       <Sidebar />
       <div className="chat-main">{children}</div>
     </div>
