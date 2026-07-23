@@ -348,23 +348,72 @@ abortRef        // AbortController 的 ref，本来就是组件内的"遥控器"
 
 ---
 
-## 九、防循环更新：setCurrentId 的写法
-
-当 store 和 URL 双向同步时，容易形成死循环：URL→store→URL→store...
-
-本项目的防御（`setCurrentId`）：
+## 九、防御性编程：setCurrentId 的幂等写法
 
 ```ts
 setCurrentId: (id) => {
-  // 防循环更新：id 没变就不动
+  // 幂等：id 没变就返回原 state（同引用），Zustand 不触发更新
   set((state) => (state.currentId === id ? state : { currentId: id }));
   //                       ↑ 如果 id 没变，返回原 state（不触发更新）
 },
 ```
 
-返回原 `state`（同一个引用）时，Zustand 检测到没变化，不触发订阅者重渲染。链条终止。
+返回原 `state`（同一个引用）时，Zustand 用 `Object.is` 比较发现引用相同，判断"没变化"，不触发订阅者重渲染。
 
-**适用场景**：任何"可能被重复调用、但值相同时不该触发更新"的 action。比如双向同步、事件监听器里的 setState。
+### ⚠️ 诚实说明：当前项目用不上这个防御
+
+本项目**目前只有 URL → store 单向同步**（URL 变了同步给 store，没有反向）。`setCurrentId` 被调用的场景里，值都是真的变了（点别的会话、刷新重置后），防御几乎不触发。
+
+那为什么留着？这是**防御性编程**——为未来可能加的"store → URL 反向同步"预留安全网。
+
+### 什么时候会用到反向同步（双向同步）
+
+双向同步 = 不光"URL 变了改 store"，还"store 变了改 URL"。当你会**从代码内部改 store**（不是用户点击）时，就需要反向同步让 URL 跟上。典型场景：
+
+1. **AI 主动建会话**：用户在无 id 的 `/chat` 发消息，后端创建会话拿到 id，需要把 URL 从 `/chat` 改成 `/chat/新id`。本项目用 `router.push` 显式做了这步（handleSend 里），所以没走"store→URL 自动同步"。
+2. **代码逻辑切换会话**：比如"删除当前会话后自动跳到下一个"，这种非用户直接点击的切换，如果通过改 store 实现，就需要反向同步让 URL 跟上。
+3. **多标签同步**：用 BroadcastChannel 跨标签同步状态时，一个标签改了 store，另一个标签的 URL 也要跟上。
+
+### 反向同步为什么会死循环
+
+假设加了反向同步（订阅 currentId 改 URL）：
+
+```ts
+// 假设性代码
+useEffect(() => {
+  router.push(`/chat/${currentId}`);   // currentId 变了就改 URL
+}, [currentId]);
+```
+
+链条：
+```
+setCurrentId("B") → currentId 变 B → useEffect 跑 → router.push("/chat/B")
+  → URL 变 → SyncConversationId 跑 → setCurrentId("B")
+    → currentId 变 B？ ← 防御：值没变，返回原引用，Zustand 不更新
+      → useEffect 不跑 → 链条终止 ✓
+```
+
+没有防御，最后一步创建新 state、Zustand 认为变了、useEffect 又跑、又改 URL……无限循环。
+
+### 为什么"返回原引用"能终止
+
+Zustand 用 `Object.is(newState, currentState)` 比较（比引用不是比值）：
+- 返回 `{ currentId: id }`（新对象）→ 引用不同 → 认为变了 → 通知订阅者
+- 返回 `state`（原对象）→ `Object.is(state, state) === true` → 认为没变 → 不通知
+
+**"返回原引用" = 告诉 Zustand 啥也没变**。
+
+### 这个模式什么时候该用
+
+不是所有 action 都要这么写，**只有"可能被重复调用、且值相同时不该触发更新"的才需要**：
+
+| 场景 | 要不要 |
+|---|---|
+| 双向同步（加了反向同步时） | ✅ 要 |
+| 事件监听器里的 setState（resize/scroll 频繁触发） | ✅ 要 |
+| 用户输入触发的更新（输入框） | ❌ 不要（每次都是有意义的变更） |
+
+判断口诀：这个 action 会不会被"重复、但实际没变化"地调用？会 → 加防御；不会 → 不用。
 
 ---
 
@@ -475,7 +524,7 @@ export const useChatStore = create<ChatState>((set) => ({
   conversations: [], currentId: null, messages: [], ...
 
   // actions
-  setCurrentId: (id) => set((state) => state.currentId === id ? state : { currentId: id }),  // 防循环
+  setCurrentId: (id) => set((state) => state.currentId === id ? state : { currentId: id }),  // 幂等（为反向同步预留）
   setMessages: (messages) => set({ messages }),                                                 // 直接设
   appendMessage: (message) => set((state) => ({ messages: [...state.messages, message] })),    // 基于旧值追加
   updateLastMessage: (content) => set((state) => { ... }),                                      // 修改最后一条
@@ -530,7 +579,7 @@ export const useChatStore = create<ChatState>((set) => ({
 外部修改（非组件代码）：
   useChatStore.setState({ x: ... })
 
-防循环更新：
+幂等写法（值没变不触发，为双向同步预留）：
   set((state) => state.x === newVal ? state : { x: newVal })
 
 异步 action：
