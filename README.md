@@ -80,7 +80,7 @@
 │   路由层 (app/)                                              │
 │   layout.tsx (全屏 flex + header)                            │
 │   chat/layout.tsx (Sidebar + 内容区)                         │
-│   chat/page.tsx + chat/[id]/page.tsx (URL↔store 双向同步)    │
+│   chat/page.tsx + chat/[id]/page.tsx (URL→store 同步)         │
 │                                                              │
 │   API 层 (app/api/)                                          │
 │   /api/chat        POST  对话（ChatOpenAI 流式 + RAG 前置）   │
@@ -106,7 +106,7 @@
 ### 架构特点
 
 1. **全局状态管理（Zustand）**：跨组件、跨路由重建共享的状态放在组件外的 store，根治"组件卸载重建丢 state"的竞态 bug（详见 `12b` 五轮 debug）
-2. **URL ↔ store 双向同步**：URL 保留可分享的会话 id，store 是真相源
+2. **URL → store 单向同步**：URL 保留可分享的会话 id，SyncConversationId 把它写进 store；setCurrentId 的幂等写法为未来反向同步预留
 3. **RAG 不接管 chat**：RAG 只是 chat 的"前置步骤"（检索 + 拼 prompt），LLM 调用的流式/中断/错误处理逻辑保留不动
 4. **可插拔向量库**：`vectorstore.ts` 抽象接口，当前 Memory 实现，未来换 Chroma 只改一个文件
 5. **服务端/客户端组件分工**：page 取数据（服务端），交互/状态在客户端组件
