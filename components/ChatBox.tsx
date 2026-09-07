@@ -293,7 +293,8 @@ export default function ChatBox({ conversationId }: { conversationId?: string })
       // 中止/出错时 completedNormally 仍为 false，跳过保存
       // （这是简化处理；理想方案见 待学与待办.md 的"后端 tee 边写边存"改进点）
       if (completedNormally && activeConvId && text && assistantContent) {
-        // 用 fire-and-forget：保存失败不影响用户继续聊天，最多丢失这一轮历史
+        /* 旧：fire-and-forget，不刷新侧边栏（阶段 12）
+        // 保存后侧边栏不会更新，新建会话的首条标题要刷新页面才出现
         fetch("/api/messages", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -305,6 +306,28 @@ export default function ChatBox({ conversationId }: { conversationId?: string })
         }).catch(() => {
           // 保存失败静默处理（实际产品里可以加 toast 提示）
         });
+        */
+
+        // 新：保存成功后调 router.refresh()，触发侧边栏重新拉列表
+        // 因为会话标题是"保存首条消息时"才生成的，保存完侧边栏才能显示标题
+        // 用 await 等保存完成再 refresh，保证侧边栏拿到的是最新数据
+        try {
+          await fetch("/api/messages", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              conversationId: activeConvId,
+              userMessage: text,
+              assistantMessage: assistantContent,
+            }),
+          });
+          // 保存成功，刷新侧边栏（让新会话标题立刻显示）
+          // 注意：router.refresh 会重新渲染服务端组件，但不会重置客户端 state
+          //       所以 ChatBox 的 messages 不会丢，只是侧边栏列表更新
+          router.refresh();
+        } catch {
+          // 保存失败静默处理
+        }
       }
     }
   }
