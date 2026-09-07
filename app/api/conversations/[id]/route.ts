@@ -15,13 +15,13 @@ type Params = { params: Promise<{ id: string }> };
 export async function GET(_request: Request, { params }: Params) {
   const { id } = await params;
 
-  const conversation = getConversation(id);
+  const conversation = await getConversation(id);
 
   if (!conversation) {
     return Response.json({ error: "会话不存在" }, { status: 404 });
   }
 
-  const messages = getMessages(id);
+  const messages = await getMessages(id);
 
   return Response.json({ conversation, messages });
 }
@@ -41,14 +41,14 @@ export async function PATCH(request: Request, { params }: Params) {
     return Response.json({ error: "请求体不是合法的 JSON" }, { status: 400 });
   }
 
-  const conversation = getConversation(id);
+  const conversation = await getConversation(id);
   if (!conversation) {
     return Response.json({ error: "会话不存在" }, { status: 404 });
   }
 
   // 处理 title（重命名）
   if (typeof body?.title === "string" && body.title.trim()) {
-    updateConversationTitle(id, body.title.trim());
+    await updateConversationTitle(id, body.title.trim());
   }
 
   // 处理 kbId（绑定/解绑知识库）
@@ -56,7 +56,7 @@ export async function PATCH(request: Request, { params }: Params) {
   if (body && "kbId" in body) {
     const kbId =
       typeof body.kbId === "string" ? body.kbId : null;
-    setConversationKb(id, kbId);
+    await setConversationKb(id, kbId);
   }
 
   return Response.json({ ok: true });
@@ -65,12 +65,12 @@ export async function PATCH(request: Request, { params }: Params) {
 export async function DELETE(_request: Request, { params }: Params) {
   const { id } = await params;
 
-  const conversation = getConversation(id);
+  const conversation = await getConversation(id);
   if (!conversation) {
     return Response.json({ error: "会话不存在" }, { status: 404 });
   }
 
-  deleteConversation(id);
+  await deleteConversation(id);
 
   return Response.json({ ok: true });
 }

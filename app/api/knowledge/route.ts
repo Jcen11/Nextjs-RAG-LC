@@ -8,7 +8,7 @@ import { createKnowledgeBase, listKnowledgeBases } from "@/lib/queries";
 import { randomUUID } from "node:crypto";
 
 export async function GET() {
-  const knowledgeBases = listKnowledgeBases();
+  const knowledgeBases = await listKnowledgeBases();
   return Response.json({ knowledgeBases });
 }
 
@@ -27,7 +27,7 @@ export async function POST(request: Request) {
   }
 
   const id = randomUUID();
-  createKnowledgeBase({ id, name });
+  await createKnowledgeBase({ id, name });
 
   return Response.json({ id, name, createdAt: new Date().toISOString() });
 }

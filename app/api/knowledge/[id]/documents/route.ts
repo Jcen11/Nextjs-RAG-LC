@@ -22,7 +22,7 @@ export async function POST(request: Request, { params }: Params) {
   const { id } = await params;
 
   // 校验知识库存在
-  const kb = getKnowledgeBase(id);
+  const kb = await getKnowledgeBase(id);
   if (!kb) {
     return Response.json({ error: "知识库不存在" }, { status: 404 });
   }
@@ -69,7 +69,7 @@ export async function POST(request: Request, { params }: Params) {
   }
 
   // 存元数据到 SQLite
-  addDocument({ id: documentId, kbId: id, filename, chunkCount });
+  await addDocument({ id: documentId, kbId: id, filename, chunkCount });
 
   return Response.json({
     id: documentId,
