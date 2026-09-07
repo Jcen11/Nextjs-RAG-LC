@@ -17,9 +17,18 @@ export default function ChatBox() {
 
   // 新：保存当前请求的 AbortController，停止时调它的 abort()
   // 用 ref 而不是 state——它不该触发重渲染，只是个"遥控器"
+  //
+  // 为什么需要这个 ref（核心）：
+  //   controller 是在 handleSend 里创建的（局部变量），但"停止"按钮点的是
+  //   handleStop——这是两个独立的函数，handleStop 拿不到 handleSend 的局部变量。
+  //   abortRef 就是个"共享盒子"：handleSend 创建 controller 后放进盒子，
+  //   handleStop 从盒子里取出来按 abort()，从而跨函数共享同一个 controller。
+  //   没有这个 ref，点"停止"时盒子是空的，啥也中断不了。
   const abortRef = useRef<AbortController | null>(null);
 
   // 新：点"停止"时调用，中断正在进行的请求
+  // 这里的 abortRef.current 就是 handleSend 里放进去的那个 controller
+  // ?. 是因为初始值是 null（还没发送过），取不到就什么都不做
   function handleStop() {
     abortRef.current?.abort();
   }
@@ -50,7 +59,9 @@ export default function ChatBox() {
     setLoading(true);
 
     // 新：每次发送都新建一个 AbortController，存到 ref 供"停止"按钮调用
+    // 步骤①：造一个新遥控器（每个请求一个独立的 controller）
     const controller = new AbortController();
+    // 步骤②：把遥控器放进共享盒子 abortRef，这样 handleStop 才能拿到它
     abortRef.current = controller;
 
     try {
@@ -63,6 +74,8 @@ export default function ChatBox() {
           messages: messagesToSend,
           system: systemPrompt.trim() || undefined,
         }),
+        // 步骤③：把 controller 和 fetch 绑定（给 fetch 挂号）
+        // 之后只要 controller.abort() 被调用，这个 fetch 就会立刻中断
         signal: controller.signal,
       });
 
@@ -167,6 +180,8 @@ export default function ChatBox() {
         return next;
       });
     } finally {
+      // 步骤④：请求结束（正常完成/被中止/出错都走这里），清空盒子
+      // 清掉是为了让下次发送放新的 controller，避免误用到旧的
       abortRef.current = null;
       setLoading(false);
     }
