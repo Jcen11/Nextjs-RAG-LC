@@ -5,6 +5,9 @@ const model = process.env.OPENAI_MODEL || "Qwen/Qwen3-8B";
 // 上游连接超时：30 秒还没连上/没首字节，就当中断处理
 const UPSTREAM_TIMEOUT_MS = 30000;
 
+// 阶段 15：RAG 检索的 top-k（每次检索返回最相关的几个片段）
+const RAG_TOP_K = 3;
+
 export async function POST(request: Request) {
   /* 旧：直接 await request.json()，如果请求体不是合法 JSON 会抛错且无人接住
   const body = await request.json();
@@ -27,6 +30,7 @@ export async function POST(request: Request) {
 
   const messages = body.messages;
   const system = body.system;
+  const kbId = typeof body.kbId === "string" ? body.kbId : null; // 阶段 15：RAG 知识库 id
 
   if (!Array.isArray(messages) || messages.length === 0) {
     return Response.json(
@@ -46,11 +50,36 @@ export async function POST(request: Request) {
     );
   }
 
-  // 如果带了 system 提示词，就拼到 messages 最前面
+  // 阶段 15：RAG 前置——如果带了 kbId，检索相关片段拼进 system
+  // 这一步在调用 LLM 之前完成，LLM 调用逻辑（下面的 fetch）零改动
+  // 关键设计：RAG 只增强 system（注入知识上下文），不接管 chat 流程
+  let finalSystem = typeof system === "string" ? system : "";
+
+  if (kbId) {
+    // 用最新一条 user 消息作为检索 query
+    const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
+    const query = lastUserMsg?.content;
+
+    if (query) {
+      try {
+        const { retrieveContext, buildRagSystemPrompt } = await import("@/lib/rag");
+        const context = await retrieveContext(kbId, query, RAG_TOP_K);
+        if (context) {
+          // 检索到了相关片段，拼进 system
+          finalSystem = buildRagSystemPrompt(context, finalSystem);
+        }
+      } catch {
+        // 检索失败不阻断对话，降级为普通对话（不带知识上下文）
+        // 实际产品可以在这里加日志，监控 RAG 失败率
+      }
+    }
+  }
+
+  // 如果带了 system 提示词（可能含 RAG 上下文），拼到 messages 最前面
   // system 是协议层的概念，由后端组装更合理；前端 messages 数组保持只装对话历史
   const messagesWithSystem =
-    typeof system === "string" && system.trim()
-      ? [{ role: "system", content: system }, ...messages]
+    finalSystem.trim()
+      ? [{ role: "system", content: finalSystem }, ...messages]
       : messages;
 
   // 新：一个 AbortController 同时管两件事——"上游超时"和"客户端中断"

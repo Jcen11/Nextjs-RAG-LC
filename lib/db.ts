@@ -51,7 +51,37 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id);
+
+  -- 阶段 15 新增：知识库 + 文档表（RAG 用）
+  -- 知识库表：一个知识库 = 一组文档，可被会话绑定
+  CREATE TABLE IF NOT EXISTS knowledge_bases (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+
+  -- 文档表：每个上传的文件一条，记录元数据
+  -- 注意：向量本身不存这里（存向量库），SQLite 只存元数据
+  CREATE TABLE IF NOT EXISTS documents (
+    id TEXT PRIMARY KEY,
+    kb_id TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    chunk_count INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (kb_id) REFERENCES knowledge_bases(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_documents_kb ON documents(kb_id);
 `);
+
+// 阶段 15：给 conversations 表加 kb_id 列（会话绑定知识库）
+// 用 try/catch 包 ALTER TABLE：SQLite 的 ADD COLUMN 不支持 IF NOT EXISTS，
+// 列已存在时会报错。首次添加才执行，已有列则忽略（热重载/已有数据库会走到 catch）
+try {
+  db.exec("ALTER TABLE conversations ADD COLUMN kb_id TEXT REFERENCES knowledge_bases(id)");
+} catch {
+  // 列已存在，忽略
+}
 
 // 开发模式下挂到 global，避免热重载重复建连接
 if (process.env.NODE_ENV !== "production") {

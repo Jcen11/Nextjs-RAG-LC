@@ -310,3 +310,205 @@ button {
   padding: 24px;
   overflow-y: auto;
 }
+
+/* ===== 阶段 15：RAG 知识库样式 ===== */
+
+/* Sidebar 的知识库管理按钮 */
+.sidebar-kb-btn {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: #f6f8fa;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  text-align: left;
+}
+.sidebar-kb-btn:hover {
+  background: #eaeef2;
+}
+
+/* ChatBox 内的知识库选择器 */
+.kb-selector-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 6px 0;
+}
+.kb-selector-label {
+  font-size: 14px;
+  color: #57606a;
+  white-space: nowrap;
+}
+.kb-selector {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid #d0d7de;
+  border-radius: 4px;
+  font-size: 14px;
+  background: white;
+}
+.kb-selector:disabled {
+  background: #f6f8fa;
+  color: #8c959f;
+  cursor: not-allowed;
+}
+
+/* 知识库管理面板（模态框） */
+.kb-panel-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.kb-panel {
+  background: white;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 560px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.kb-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid #d0d7de;
+}
+.kb-panel-header h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.kb-panel-close {
+  background: none;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  color: #57606a;
+  padding: 4px 8px;
+}
+.kb-panel-close:hover {
+  color: #24292f;
+}
+
+/* 新建知识库 */
+.kb-create {
+  display: flex;
+  gap: 8px;
+  padding: 16px 20px;
+  border-bottom: 1px solid #eaeef2;
+}
+.kb-create-input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid #d0d7de;
+  border-radius: 4px;
+  font-size: 14px;
+}
+.kb-create-btn {
+  padding: 6px 16px;
+  background: #1f883d;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.kb-create-btn:disabled {
+  background: #8c959f;
+  cursor: not-allowed;
+}
+
+/* 知识库列表 */
+.kb-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+.kb-empty,
+.kb-docs-empty {
+  padding: 20px;
+  color: #8c959f;
+  text-align: center;
+  font-size: 14px;
+}
+.kb-item {
+  border-bottom: 1px solid #eaeef2;
+}
+.kb-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+}
+.kb-item-name {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  text-align: left;
+  flex: 1;
+}
+.kb-item-name:hover {
+  color: #0969da;
+}
+.kb-action-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 8px;
+  font-size: 14px;
+}
+.kb-action-btn:hover {
+  opacity: 0.7;
+}
+.kb-item-body {
+  padding: 0 20px 16px;
+  background: #f6f8fa;
+}
+
+/* 文档列表 */
+.kb-docs {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 8px 0;
+}
+.kb-doc {
+  padding: 6px 0;
+  font-size: 13px;
+  color: #24292f;
+}
+.kb-doc-meta {
+  margin-left: 8px;
+  color: #8c959f;
+  font-size: 12px;
+}
+
+/* 上传区域 */
+.kb-upload {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #d0d7de;
+}
+.kb-upload input[type="file"] {
+  font-size: 13px;
+}
+.kb-upload-msg {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: #57606a;
+}

@@ -10,6 +10,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useChatStore } from "@/lib/store";
 import type { Conversation } from "@/lib/queries";
+import KnowledgePanel from "./KnowledgePanel";
 
 export default function Sidebar() {
   const router = useRouter();
@@ -18,15 +19,20 @@ export default function Sidebar() {
   const conversations = useChatStore((s) => s.conversations);
   const currentId = useChatStore((s) => s.currentId);
   const refreshConversations = useChatStore((s) => s.refreshConversations);
+  const refreshKnowledgeBases = useChatStore((s) => s.refreshKnowledgeBases);
 
   // 纯 UI 临时状态留在组件 useState
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
+  // 阶段 15：知识库面板开关
+  const [kbPanelOpen, setKbPanelOpen] = useState(false);
 
   // mount 时拉一次列表（后续由 ChatBox 保存消息后调 refreshConversations 刷新）
+  // 阶段 15：也拉一次知识库列表（KbSelector 下拉要用）
   useEffect(() => {
     refreshConversations();
-  }, [refreshConversations]);
+    refreshKnowledgeBases();
+  }, [refreshConversations, refreshKnowledgeBases]);
 
   // 新建会话：跳到 /chat（无 id），store.currentId 会被清空（见 /chat/page.tsx 的逻辑）
   function handleNew() {
@@ -93,6 +99,13 @@ export default function Sidebar() {
       <button className="sidebar-new-btn" onClick={handleNew} type="button">
         + 新建会话
       </button>
+      <button
+        className="sidebar-kb-btn"
+        onClick={() => setKbPanelOpen(true)}
+        type="button"
+      >
+        📚 知识库管理
+      </button>
 
       <ul className="sidebar-list">
         {conversations.length === 0 && (
@@ -158,6 +171,9 @@ export default function Sidebar() {
           );
         })}
       </ul>
+
+      {/* 阶段 15：知识库管理面板（模态框） */}
+      <KnowledgePanel open={kbPanelOpen} onClose={() => setKbPanelOpen(false)} />
     </aside>
   );
 }
