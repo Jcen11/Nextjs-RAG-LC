@@ -16,6 +16,7 @@ export default function ChatBox() {
   const messages = useChatStore((s) => s.messages);
   const systemPrompt = useChatStore((s) => s.systemPrompt);
   const loading = useChatStore((s) => s.loading);
+  const justCreatedId = useChatStore((s) => s.justCreatedId);
 
   // 从 store 读 actions
   const setMessages = useChatStore((s) => s.setMessages);
@@ -23,6 +24,8 @@ export default function ChatBox() {
   const updateLastMessage = useChatStore((s) => s.updateLastMessage);
   const setLoading = useChatStore((s) => s.setLoading);
   const setSystemPrompt = useChatStore((s) => s.setSystemPrompt);
+  const setJustCreatedId = useChatStore((s) => s.setJustCreatedId);
+  const refreshConversations = useChatStore((s) => s.refreshConversations);
 
   // 纯 UI 临时状态留在组件 useState（不必进 store）
   const [input, setInput] = useState("");
@@ -31,6 +34,13 @@ export default function ChatBox() {
   // mount 时（或 currentId 变化时）从数据库加载历史
   // 依赖数组 [currentId]：currentId 变化时重新加载
   useEffect(() => {
+    // 新建会话保护：如果是刚创建的会话（store 里 messages 已有用户消息，但数据库还没存），
+    // 跳过加载历史——否则会拿到空数组覆盖掉 store.messages（"首条消息被吃"的 bug 根因）
+    if (currentId && currentId === justCreatedId) {
+      setJustCreatedId(null); // 用完立刻清标记，下次（如刷新）正常加载
+      return;
+    }
+
     if (!currentId) {
       // 无 id = 新会话，清空状态
       setMessages([]);
@@ -71,7 +81,7 @@ export default function ChatBox() {
     return () => {
       cancelled = true;
     };
-  }, [currentId, setMessages, setSystemPrompt]);
+  }, [currentId, justCreatedId, setMessages, setSystemPrompt, setJustCreatedId]);
 
   // 保存当前请求的 AbortController，停止时调它的 abort()
   // 用 ref 而不是 state——它不该触发重渲染，只是个"遥控器"
@@ -117,6 +127,11 @@ export default function ChatBox() {
         }
         const data = await res.json();
         activeConvId = data.id;
+        // 新建会话保护：标记这个 id 是刚建的，useEffect 看到就跳过加载历史
+        // （因为数据库还没存消息，加载会拿到空数组覆盖掉 store.messages）
+        // 必须在 router.push 之前设置，push 后 useEffect 会立刻检查它
+        // 这个标记放 store 而不是 ref——ref 在组件实例内、重建会丢，store 跨实例存活
+        setJustCreatedId(activeConvId);
         // 更新 URL（不触发整页刷新，走客户端导航）
         // 注意：跳到 /chat/[id] 会让本组件重建，但因为 messages 在 store 里，重建后不丢
         router.push(`/chat/${activeConvId}`);
@@ -306,10 +321,10 @@ export default function ChatBox() {
               assistantMessage: assistantContent,
             }),
           });
-          // 保存成功，刷新侧边栏（让新会话标题立刻显示）
-          // 注意：router.refresh 会重新渲染服务端组件，但不会重置客户端 state
-          //       所以 ChatBox 的 messages 不会丢，只是侧边栏列表更新
-          router.refresh();
+          // 保存成功，刷新侧边栏会话列表（让新会话标题立刻显示）
+          // 直接刷新 store 的 conversations——Sidebar 订阅了它，会自动重渲染
+          // （之前用 router.refresh 无效，因为它刷新服务端组件树，而 Sidebar 是客户端组件）
+          await refreshConversations();
         } catch {
           // 保存失败静默处理
         }

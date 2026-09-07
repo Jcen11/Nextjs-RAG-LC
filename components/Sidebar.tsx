@@ -17,30 +17,16 @@ export default function Sidebar() {
   // 从 store 读状态（currentId 由 [id]/page.tsx 的 SyncConversationId 同步进来）
   const conversations = useChatStore((s) => s.conversations);
   const currentId = useChatStore((s) => s.currentId);
-  const setConversations = useChatStore((s) => s.setConversations);
+  const refreshConversations = useChatStore((s) => s.refreshConversations);
 
   // 纯 UI 临时状态留在组件 useState
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
 
-  // 拉取会话列表（从 API 拿到后写进 store，供所有订阅者用）
-  async function loadConversations() {
-    try {
-      const res = await fetch("/api/conversations");
-      if (!res.ok) return;
-      const data = await res.json();
-      setConversations(data.conversations as Conversation[]);
-    } catch {
-      // 静默失败，侧边栏空着也不影响聊天
-    }
-  }
-
-  // mount 时拉一次列表
-  // 不再依赖 pathname 变化——列表刷新改为在 create/rename/delete 后主动调 loadConversations
+  // mount 时拉一次列表（后续由 ChatBox 保存消息后调 refreshConversations 刷新）
   useEffect(() => {
-    loadConversations();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    refreshConversations();
+  }, [refreshConversations]);
 
   // 新建会话：跳到 /chat（无 id），store.currentId 会被清空（见 /chat/page.tsx 的逻辑）
   function handleNew() {
@@ -74,7 +60,7 @@ export default function Sidebar() {
       });
       if (res.ok) {
         // 刷新列表显示新标题
-        loadConversations();
+        refreshConversations();
       }
     } catch {
       // 静默失败
@@ -96,7 +82,7 @@ export default function Sidebar() {
         router.push("/chat");
       }
       // 刷新列表（删的非当前会话也要更新列表）
-      loadConversations();
+      refreshConversations();
     } catch {
       // 静默失败
     }
