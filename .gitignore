@@ -31,3 +31,9 @@ yarn-error.log*
 
 # git 重建临时备份（瘦身历史后可删）
 /.git.bak/
+
+# SQLite 数据库文件（含本地会话数据，不进 git；换电脑重新生成）
+*.db
+*.db-journal
+*.db-wal
+*.db-shm

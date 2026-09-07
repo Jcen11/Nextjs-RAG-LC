@@ -1,4 +1,9 @@
-import ChatBox from "../../components/ChatBox";
+// /chat  ——  无 id 入口，对应"新建会话"
+//
+// ChatBox 不传 conversationId，用户首次发送时会先 POST 创建会话，
+// 再用 router.push 跳到 /chat/[id]，URL 更新后刷新也能恢复。
+
+import ChatBox from "@/components/ChatBox";
 
 export default function ChatPage() {
   return (

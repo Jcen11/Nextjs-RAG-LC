@@ -1,19 +1,68 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import Markdown from "./Markdown";
 
 type Message = {
   role: "user" | "assistant" | "system";
   content: string;
+  id?: number; // 新：从数据库加载的消息有 id（自增主键），新建的消息暂无
 };
 
-export default function ChatBox() {
+// 新：组件接收可选的 conversationId
+// - 有 id（从 /chat/[id] 进入）：mount 时加载历史
+// - 无 id（从 /chat 进入）：首次发送时创建会话，拿到 id 后跳转 URL
+export default function ChatBox({ conversationId }: { conversationId?: string }) {
+  const router = useRouter();
   const [input, setInput] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
   const [systemOpen, setSystemOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
+
+  // 新：mount 时（或 conversationId 变化时）从数据库加载历史
+  // 依赖数组 [conversationId] 表示只在 conversationId 变化时重新加载
+  useEffect(() => {
+    if (!conversationId) {
+      // 无 id = 新会话，清空状态
+      setMessages([]);
+      setSystemPrompt("");
+      return;
+    }
+
+    // 有 id = 加载历史。用 async 函数包一层，因为 useEffect 本身不能是 async
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/conversations/${conversationId}`);
+        if (!res.ok) {
+          return;
+        }
+        const data = await res.json();
+        if (cancelled) {
+          return; // 组件卸载了就别再 setState（避免 React 警告）
+        }
+        setMessages(
+          data.messages.map((m: { id: number; role: string; content: string }) => ({
+            id: m.id,
+            role: m.role as Message["role"],
+            content: m.content,
+          })),
+        );
+        if (data.conversation?.systemPrompt) {
+          setSystemPrompt(data.conversation.systemPrompt);
+        }
+      } catch {
+        // 加载失败静默处理，用户会看到空会话（不影响发新消息）
+      }
+    })();
+
+    // cleanup：如果 conversationId 变化或组件卸载时请求还没回，标记取消
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId]);
 
   // 新：保存当前请求的 AbortController，停止时调它的 abort()
   // 用 ref 而不是 state——它不该触发重渲染，只是个"遥控器"
@@ -40,6 +89,34 @@ export default function ChatBox() {
       return;
     }
 
+    // 新：首次发送时若无 conversationId，先创建会话
+    // 创建成功后用 router.push 更新 URL 到 /chat/[id]
+    // 这样刷新页面也能恢复，且当前会话有了"身份"
+    let activeConvId = conversationId;
+    if (!activeConvId) {
+      try {
+        const res = await fetch("/api/conversations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            systemPrompt: systemPrompt.trim() || undefined,
+          }),
+        });
+        if (!res.ok) {
+          return;
+        }
+        const data = await res.json();
+        activeConvId = data.id;
+        // 更新 URL（不触发整页刷新，走客户端导航）
+        router.push(`/chat/${activeConvId}`);
+        // 注意：router.push 会让 useEffect 重新跑（conversationId 变了），
+        // 但此时 messages 还是空的，useEffect 会 setMessages([])。
+        // 所以这里不能让组件重新加载——我们继续往下走，本地 state 已经有了。
+      } catch {
+        return;
+      }
+    }
+
     const userMessage: Message = {
       role: "user",
       content: text,
@@ -63,6 +140,14 @@ export default function ChatBox() {
     const controller = new AbortController();
     // 步骤②：把遥控器放进共享盒子 abortRef，这样 handleStop 才能拿到它
     abortRef.current = controller;
+
+    // 新：标记这轮是否正常完成（用于决定是否保存到数据库）
+    // - 正常 break 出 while 循环 = true → 保存
+    // - 中止/出错进 catch = false → 不保存
+    // 声明在 try 外面，finally 才能访问到
+    let completedNormally = false;
+    // 同理，assistant 累积内容也提到外面，finally 保存时要用
+    let assistantContent = "";
 
     try {
       const response = await fetch("/api/chat", {
@@ -109,6 +194,8 @@ export default function ChatBox() {
 
       const decoder = new TextDecoder();
 
+      // assistantContent 已在 try 外声明（finally 要用），这里直接累加
+
       while (true) {
         const { done, value } = await reader.read();
 
@@ -122,6 +209,8 @@ export default function ChatBox() {
           continue;
         }
 
+        assistantContent += chunk; // 同步累积，供 finally 保存用
+
         setMessages((prev) => {
           const next = [...prev];
           const lastMessage = next[next.length - 1];
@@ -134,6 +223,9 @@ export default function ChatBox() {
           return next;
         });
       }
+
+      // 走到这里说明 while 正常结束（流读完），标记为可保存
+      completedNormally = true;
     } catch (error: unknown) {
       // 新：区分两种情况——
       // 1) 用户主动中止：controller.signal.aborted 为 true
@@ -184,6 +276,24 @@ export default function ChatBox() {
       // 清掉是为了让下次发送放新的 controller，避免误用到旧的
       abortRef.current = null;
       setLoading(false);
+
+      // 新：只有正常完成时才保存到数据库
+      // 中止/出错时 completedNormally 仍为 false，跳过保存
+      // （这是简化处理；理想方案见 待学与待办.md 的"后端 tee 边写边存"改进点）
+      if (completedNormally && activeConvId && text && assistantContent) {
+        // 用 fire-and-forget：保存失败不影响用户继续聊天，最多丢失这一轮历史
+        fetch("/api/messages", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            conversationId: activeConvId,
+            userMessage: text,
+            assistantMessage: assistantContent,
+          }),
+        }).catch(() => {
+          // 保存失败静默处理（实际产品里可以加 toast 提示）
+        });
+      }
     }
   }
 
@@ -255,6 +365,7 @@ export default function ChatBox() {
             停止
           </button>
         )}
+        {/* 旧：清空当前消息（仅本地，刷新后还在）
         <button
           className="clear-btn"
           onClick={() => setMessages([])}
@@ -262,6 +373,16 @@ export default function ChatBox() {
           type="button"
         >
           清空
+        </button>
+        */}
+        {/* 新：新建会话——跳到 /chat（无 id），触发全新会话流程 */}
+        <button
+          className="clear-btn"
+          onClick={() => router.push("/chat")}
+          disabled={loading}
+          type="button"
+        >
+          新建会话
         </button>
       </div>
 
@@ -280,7 +401,7 @@ export default function ChatBox() {
       <ul>
         {messages.map((message, index) => (
           <li
-            key={index}
+            key={message.id ?? index}
             className={message.role === "user" ? "msg-user" : "msg-assistant"}
           >
             <strong>{message.role === "user" ? "你" : "机器人"}：</strong>
