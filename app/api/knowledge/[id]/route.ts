@@ -13,19 +13,19 @@ type Params = { params: Promise<{ id: string }> };
 export async function GET(_request: Request, { params }: Params) {
   const { id } = await params;
 
-  const kb = getKnowledgeBase(id);
+  const kb = await getKnowledgeBase(id);
   if (!kb) {
     return Response.json({ error: "知识库不存在" }, { status: 404 });
   }
 
-  const documents = listDocuments(id);
+  const documents = await listDocuments(id);
   return Response.json({ knowledgeBase: kb, documents });
 }
 
 export async function DELETE(_request: Request, { params }: Params) {
   const { id } = await params;
 
-  const kb = getKnowledgeBase(id);
+  const kb = await getKnowledgeBase(id);
   if (!kb) {
     return Response.json({ error: "知识库不存在" }, { status: 404 });
   }
@@ -37,7 +37,7 @@ export async function DELETE(_request: Request, { params }: Params) {
   } catch {
     // 向量库删除失败不阻断（可能本来就空），继续删元数据
   }
-  deleteKnowledgeBase(id);
+  await deleteKnowledgeBase(id);
 
   return Response.json({ ok: true });
 }

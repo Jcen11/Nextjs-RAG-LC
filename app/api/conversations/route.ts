@@ -13,7 +13,7 @@ import { randomUUID } from "node:crypto";
 // 不含消息内容，只返回会话元信息（id/title/createdAt）
 // 按 created_at DESC 排序（最新的在最前），由 listConversations 保证
 export async function GET() {
-  const conversations = listConversations();
+  const conversations = await listConversations();
   return Response.json({ conversations });
 }
 
@@ -31,7 +31,7 @@ export async function POST(request: Request) {
 
   const id = randomUUID();
 
-  createConversation({ id, systemPrompt });
+  await createConversation({ id, systemPrompt });
 
   return Response.json({
     id,

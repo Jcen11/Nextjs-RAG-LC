@@ -9,17 +9,14 @@
 //
 // 设计说明：这里一次性保存两条消息（user + assistant），而不是分两次调用。
 // 因为这是"一轮对话"的原子单位——要么都存，要么都不存，避免半截状态。
+// 原子性由 queries.saveMessagePair 保证（阶段 18：本地 SQLite 用事务，
+// Turso 用 batch，两后端行为一致）。
 //
 // 改进点（标记在 待学与待办.md）：
 //   当前"前端断了就不存"是简化处理。理想方案是后端在流式时边写边存（tee 流），
-//   这样即使前端断开，已生成的部分也能保留。留到阶段 14 合入 LangChain 时改进。
+//   这样即使前端断开，已生成的部分也能保留。留后续改进。
 
-import {
-  addMessage,
-  getConversation,
-  updateConversationTitle,
-} from "@/lib/queries";
-import { db_begin, db_commit, db_rollback } from "@/lib/db";
+import { saveMessagePair } from "@/lib/queries";
 
 export async function POST(request: Request) {
   let body;
@@ -39,37 +36,23 @@ export async function POST(request: Request) {
     return Response.json({ error: "参数缺失或类型错误" }, { status: 400 });
   }
 
-  // 校验会话存在（防止伪造 conversationId 写入孤儿消息）
-  const conversation = getConversation(conversationId);
-  if (!conversation) {
-    return Response.json({ error: "会话不存在" }, { status: 404 });
-  }
-
-  // 用事务保证原子性：两条 INSERT 要么都成功，要么都回滚
-  // 注意 node:sqlite 的事务靠 BEGIN/COMMIT/ROLLBACK 语句控制（better-sqlite3 有 .transaction() 包装，这里手动写）
+  // 原子保存（内部会校验会话存在；不存在返回 null → 404）
   try {
-    db_begin();
-    const userMsgId = addMessage({
+    const saved = await saveMessagePair({
       conversationId,
-      role: "user",
-      content: userMessage,
-    });
-    const assistantMsgId = addMessage({
-      conversationId,
-      role: "assistant",
-      content: assistantMessage,
+      userMessage,
+      assistantMessage,
     });
 
-    // 如果会话还没标题，用首条 user 消息前 20 字作为标题（供阶段 13 侧边栏显示）
-    if (!conversation.title && userMessage.trim()) {
-      const title = userMessage.trim().slice(0, 20);
-      updateConversationTitle(conversationId, title);
+    if (!saved) {
+      return Response.json({ error: "会话不存在" }, { status: 404 });
     }
 
-    db_commit();
-    return Response.json({ ok: true, messageIds: [userMsgId, assistantMsgId] });
+    return Response.json({
+      ok: true,
+      messageIds: [saved.userMsgId, saved.assistantMsgId],
+    });
   } catch (err) {
-    db_rollback();
     return Response.json(
       { error: `保存失败：${err instanceof Error ? err.message : "未知错误"}` },
       { status: 500 },
