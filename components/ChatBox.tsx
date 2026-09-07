@@ -34,10 +34,17 @@ export default function ChatBox() {
   // mount 时（或 currentId 变化时）从数据库加载历史
   // 依赖数组 [currentId]：currentId 变化时重新加载
   useEffect(() => {
-    // 新建会话保护：如果是刚创建的会话（store 里 messages 已有用户消息，但数据库还没存），
-    // 跳过加载历史——否则会拿到空数组覆盖掉 store.messages（"首条消息被吃"的 bug 根因）
-    if (currentId && currentId === justCreatedId) {
-      setJustCreatedId(null); // 用完立刻清标记，下次（如刷新）正常加载
+    // 新建会话保护：如果标记了 justCreatedId，说明是本地刚建的会话，
+    // 此时 store.messages 已有用户消息（handleSend 写进去的），数据库还没存。
+    // 跳过所有加载/清空逻辑——否则 useEffect 会用空数组覆盖掉 store.messages。
+    // 这个检查必须放在最前面，拦住 useEffect 的所有分支（包括 currentId=null 的清空分支），
+    // 因为 router.push 后新实例 mount 时 currentId 可能还是 null（SyncConversationId 还没跑）。
+    if (justCreatedId) {
+      // 标记还在 = 这是刚建的会话，别动 messages
+      // 等 currentId 变成 justCreatedId 后再清标记（确保两次 useEffect 都被拦住）
+      if (currentId === justCreatedId) {
+        setJustCreatedId(null);
+      }
       return;
     }
 
@@ -108,10 +115,28 @@ export default function ChatBox() {
       return;
     }
 
+    const userMessage: Message = {
+      role: "user",
+      content: text,
+    };
+
+    const assistantMessage: Message = {
+      role: "assistant",
+      content: "",
+    };
+
+    // 先构造要发给后端的完整历史：旧消息 + 这条新 user 消息
+    // 必须在 setMessages 加空 assistant 占位之前构造，否则会把空占位也发给 AI
+    const messagesToSend = [...messages, userMessage];
+
+    // 关键顺序：先把消息写进 store，再处理新建会话 + router.push
+    // 因为 router.push 会触发组件重建，useEffect 会跑——必须让 store.messages
+    // 在 push 之前就有内容，配合 justCreatedId 标记拦住 useEffect 的清空/加载
+    setMessages([...messages, userMessage, assistantMessage]);
+    setInput("");
+    setLoading(true);
+
     // 首次发送时若无 currentId，先创建会话
-    // 创建成功后用 router.push 更新 URL 到 /chat/[id]（store→URL 方向）
-    // URL 变化会触发 [id]/page.tsx 的 SyncConversationId 同步回 store（URL→store 方向）
-    // 这里的关键是：state 已经在 store 里，组件即使重建也能从 store 读回 messages
     let activeConvId = currentId;
     if (!activeConvId) {
       try {
@@ -128,36 +153,17 @@ export default function ChatBox() {
         const data = await res.json();
         activeConvId = data.id;
         // 新建会话保护：标记这个 id 是刚建的，useEffect 看到就跳过加载历史
-        // （因为数据库还没存消息，加载会拿到空数组覆盖掉 store.messages）
+        // （数据库还没存消息，加载会拿到空数组覆盖掉 store.messages）
         // 必须在 router.push 之前设置，push 后 useEffect 会立刻检查它
-        // 这个标记放 store 而不是 ref——ref 在组件实例内、重建会丢，store 跨实例存活
+        // 放 store 而不是 ref——ref 在组件实例内、重建会丢，store 跨实例存活
         setJustCreatedId(activeConvId);
         // 更新 URL（不触发整页刷新，走客户端导航）
-        // 注意：跳到 /chat/[id] 会让本组件重建，但因为 messages 在 store 里，重建后不丢
+        // 跳到 /chat/[id] 会让本组件重建，但 store.messages 已有内容 + justCreatedId 拦住 useEffect
         router.push(`/chat/${activeConvId}`);
       } catch {
         return;
       }
     }
-
-    const userMessage: Message = {
-      role: "user",
-      content: text,
-    };
-
-    // 先构造要发给后端的完整历史：旧消息 + 这条新 user 消息
-    // 必须在 setMessages 加空 assistant 占位之前构造，否则会把空占位也发给 AI
-    const messagesToSend = [...messages, userMessage];
-
-    const assistantMessage: Message = {
-      role: "assistant",
-      content: "",
-    };
-
-    // 用 store 的 action 更新（替代原来的本地 setMessages）
-    setMessages([...messages, userMessage, assistantMessage]);
-    setInput("");
-    setLoading(true);
 
     // 每次发送都新建一个 AbortController，存到 ref 供"停止"按钮调用
     // 步骤①：造一个新遥控器（每个请求一个独立的 controller）
