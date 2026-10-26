@@ -32,8 +32,12 @@ export interface DbStatement {
     changes: number;
     lastInsertRowid: number;
   }>;
-  get(...params: (string | number | bigint | null)[]): Promise<Record<string, unknown> | undefined>;
-  all(...params: (string | number | bigint | null)[]): Promise<Record<string, unknown>[]>;
+  get(
+    ...params: (string | number | bigint | null)[]
+  ): Promise<Record<string, unknown> | undefined>;
+  all(
+    ...params: (string | number | bigint | null)[]
+  ): Promise<Record<string, unknown>[]>;
 }
 
 export interface DbBatchResult {
@@ -88,30 +92,40 @@ const globalForDb = globalThis as unknown as {
   db: DatabaseSync | undefined;
 };
 
-const sqliteDb = globalForDb.db ?? new DatabaseSync("chat.db");
+// 惰性创建（阶段 18 部署修复）：不能无条件在模块顶层 new DatabaseSync——
+// serverless 文件系统只读时，open 会在 import 阶段就抛 "unable to open database file"，
+// 连"该用哪个后端"的判断都走不到。和 Turso 客户端同理：第一次真正使用时才创建。
+let sqliteDb: DatabaseSync | null = null;
 
-// 开启外键约束（SQLite 默认关闭外键，必须显式开启，否则 ON DELETE CASCADE 不生效）
-sqliteDb.exec("PRAGMA foreign_keys = ON;");
+function getSqliteDb(): DatabaseSync {
+  if (!sqliteDb) {
+    sqliteDb = globalForDb.db ?? new DatabaseSync("chat.db");
 
-// 建表（同步执行，模块加载时完成；IF NOT EXISTS 保证重复执行不报错）
-for (const statement of SCHEMA_STATEMENTS) {
-  sqliteDb.exec(statement);
-}
+    // 开启外键约束（SQLite 默认关闭外键，必须显式开启，否则 ON DELETE CASCADE 不生效）
+    sqliteDb.exec("PRAGMA foreign_keys = ON;");
 
-// kb_id 列：列已存在时会报错（try/catch 忽略；热重载/已有数据库会走到这里）
-try {
-  sqliteDb.exec(KB_ID_COLUMN_SQL);
-} catch {
-  // 列已存在，忽略
-}
+    // 建表（同步执行；IF NOT EXISTS 保证重复执行不报错）
+    for (const statement of SCHEMA_STATEMENTS) {
+      sqliteDb.exec(statement);
+    }
 
-if (process.env.NODE_ENV !== "production") {
-  globalForDb.db = sqliteDb;
+    // kb_id 列：列已存在时会报错（try/catch 忽略；热重载/已有数据库会走到这里）
+    try {
+      sqliteDb.exec(KB_ID_COLUMN_SQL);
+    } catch {
+      // 列已存在，忽略
+    }
+
+    if (process.env.NODE_ENV !== "production") {
+      globalForDb.db = sqliteDb;
+    }
+  }
+  return sqliteDb;
 }
 
 function sqlitePrepare(sql: string): DbStatement {
   // node:sqlite 的 prepared statement（同步 API，外面包成 Promise）
-  const stmt = sqliteDb.prepare(sql);
+  const stmt = getSqliteDb().prepare(sql);
   return {
     run: (...params) => {
       const result = stmt.run(...params);
@@ -121,7 +135,9 @@ function sqlitePrepare(sql: string): DbStatement {
       });
     },
     get: (...params) =>
-      Promise.resolve(stmt.get(...params) as Record<string, unknown> | undefined),
+      Promise.resolve(
+        stmt.get(...params) as Record<string, unknown> | undefined,
+      ),
     all: (...params) =>
       Promise.resolve(stmt.all(...params) as Record<string, unknown>[]),
   };
@@ -240,19 +256,19 @@ export async function dbRunBatch(
   }
 
   // SQLite：手动事务
-  sqliteDb.exec("BEGIN");
+  getSqliteDb().exec("BEGIN");
   try {
     const results = statements.map((s) => {
-      const result = sqliteDb.prepare(s.sql).run(...s.args);
+      const result = getSqliteDb().prepare(s.sql).run(...s.args);
       return {
         changes: Number(result.changes),
         lastInsertRowid: Number(result.lastInsertRowid),
       };
     });
-    sqliteDb.exec("COMMIT");
+    getSqliteDb().exec("COMMIT");
     return results;
   } catch (err) {
-    sqliteDb.exec("ROLLBACK");
+    getSqliteDb().exec("ROLLBACK");
     throw err;
   }
 }
